@@ -1,4 +1,3 @@
-import { randomUUID } from 'crypto'
 import type { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import z from 'zod'
@@ -28,11 +27,11 @@ export async function createTrip(app: FastifyInstance) {
     const { destination, starts_at, ends_at, owner_name, owner_email, emails_to_invite } = request.body
 
     if (dayjs(starts_at).isBefore(new Date())) {
-      throw new Error('Invalid trip start date.')
+      throw new Error('Data de início da viagem inválida.')
     }
 
     if (dayjs(ends_at).isBefore(starts_at)) {
-      throw new Error('Invalid trip end date.')
+      throw new Error('Data de fim da viagem inválida.')
     }
 
     const trip = await prisma.trip.create({
@@ -59,7 +58,7 @@ export async function createTrip(app: FastifyInstance) {
     })
 
     const formattedStartDate = dayjs(starts_at).format('LL')
-    const formattedEndDate = dayjs(starts_at).format('LL')
+    const formattedEndDate = dayjs(ends_at).format('LL')
 
     const confirmationLink = `http://localhost:3333/trips/${trip.id}/confirm`
 
@@ -103,7 +102,66 @@ export async function confirmTrip(app: FastifyInstance) {
         trip_id: z.string().uuid(),
       })
     }
-  }, async (request) => {
-    return { trip_id: request.params.trip_id, message: 'Viagem confirmada com sucesso!' }
+  }, async (request, response) => {
+    const { trip_id } = request.params
+
+    const trip = await prisma.trip.findUnique({
+      where: { id: trip_id },
+      include: {
+        participants: {
+          where: { is_owner: false },
+        }
+      },
+    })
+
+    if (!trip) {
+      throw new Error('Viagem não encontrada.')
+    }
+
+    if (trip.is_confirmed) {
+      return response.redirect(`http://localhost:3000/trips/${trip_id}`)
+    }
+
+    await prisma.trip.update({
+      where: { id: trip_id },
+      data: { is_confirmed: true },
+    })
+
+    const formattedStartDate = dayjs(trip.starts_at).format('LL')
+    const formattedEndDate = dayjs(trip.ends_at).format('LL')
+
+    const mail = await getMailClient()
+
+    await Promise.all(
+      trip.participants.map(async (participant) => {
+        const confirmationLink = `http://localhost:3333/participants/${participant.id}/confirm`
+
+        const message = await mail.sendMail({
+          from: {
+            name: 'Felsky',
+            address: 'felsky@mail.com',
+          },
+          to: participant.email,
+          subject: `Confirme sua presença na viagem para ${trip.destination} em ${formattedStartDate}`,
+            html: `
+            <div style="font-family: sans-serif; font-size: 16px; line-height: 1.6;">
+              <p>Você foi convidado(a) para participar de uma viagem para <strong>${trip.destination}</strong> nas datas de <strong>${formattedStartDate}</strong> até <strong>${formattedEndDate}</strong>.</p>
+              <p></p>
+              <p>Para confirmar sua presença na viagem, clique no link abaixo:</p>
+              <p></p>
+              <p>
+                <a href="${confirmationLink}">Confirmar viagem</a>
+              </p>
+              <p></p>
+              <p>Caso você não saiba do que se trata esse e-mail, apenas ignore esse e-mail.</p>
+            </div>
+          `.trim(),
+        })
+
+        console.log(nodemailer.getTestMessageUrl(message))
+      })
+    )
+
+    return response.redirect(`http://localhost:3000/trips/${trip_id}`)
   })
 }
