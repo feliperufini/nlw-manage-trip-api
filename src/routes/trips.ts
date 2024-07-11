@@ -5,6 +5,8 @@ import { prisma } from '../lib/prisma'
 import nodemailer from 'nodemailer'
 import { getMailClient } from '../lib/mail'
 import { dayjs } from '../lib/dayjs'
+import { ClientError } from '../errors/client-error'
+import { env } from '../env'
 
 export async function createTrip(app: FastifyInstance) {
   app.withTypeProvider<ZodTypeProvider>().post('/trips', {
@@ -22,11 +24,11 @@ export async function createTrip(app: FastifyInstance) {
     const { destination, starts_at, ends_at, owner_name, owner_email, emails_to_invite } = request.body
 
     if (dayjs(starts_at).isBefore(new Date())) {
-      throw new Error('Data de início da viagem inválida.')
+      throw new ClientError('Data de início da viagem inválida.')
     }
 
     if (dayjs(ends_at).isBefore(starts_at)) {
-      throw new Error('Data de fim da viagem inválida.')
+      throw new ClientError('Data de fim da viagem inválida.')
     }
 
     const trip = await prisma.trip.create({
@@ -55,7 +57,7 @@ export async function createTrip(app: FastifyInstance) {
     const formattedStartDate = dayjs(starts_at).format('LL')
     const formattedEndDate = dayjs(ends_at).format('LL')
 
-    const confirmationLink = `http://localhost:3333/trips/${trip.id}/confirm`
+    const confirmationLink = `${env.API_BASE_URL}/trips/${trip.id}/confirm`
 
     const mail = await getMailClient()
 
@@ -110,11 +112,11 @@ export async function confirmTrip(app: FastifyInstance) {
     })
 
     if (!trip) {
-      throw new Error('Viagem não encontrada.')
+      throw new ClientError('Viagem não encontrada.')
     }
 
     if (trip.is_confirmed) {
-      return response.redirect(`http://localhost:3000/trips/${trip_id}`)
+      return response.redirect(`${env.WEB_BASE_URL}/trips/${trip_id}`)
     }
 
     await prisma.trip.update({
@@ -129,7 +131,7 @@ export async function confirmTrip(app: FastifyInstance) {
 
     await Promise.all(
       trip.participants.map(async (participant) => {
-        const confirmationLink = `http://localhost:3333/participants/${participant.id}/confirm`
+        const confirmationLink = `${env.API_BASE_URL}/participants/${participant.id}/confirm`
 
         const message = await mail.sendMail({
           from: {
@@ -157,6 +159,76 @@ export async function confirmTrip(app: FastifyInstance) {
       })
     )
 
-    return response.redirect(`http://localhost:3000/trips/${trip_id}`)
+    return response.redirect(`${env.WEB_BASE_URL}/trips/${trip_id}`)
+  })
+}
+
+export async function updateTrip(app: FastifyInstance) {
+  app.withTypeProvider<ZodTypeProvider>().put('/trips/:trip_id', {
+    schema: {
+      params: z.object({
+        trip_id: z.string().uuid(),
+      }),
+      body: z.object({
+        destination: z.string().min(3).max(90),
+        starts_at: z.coerce.date(),
+        ends_at: z.coerce.date(),
+      })
+    }
+  }, async (request) => {
+    const { trip_id } = request.params
+    const { destination, starts_at, ends_at } = request.body
+
+    const trip = await prisma.trip.findUnique({
+      where: { id: trip_id },
+    })
+
+    if (!trip) {
+      throw new ClientError('Viagem não encontrada.')
+    }
+
+    if (dayjs(starts_at).isBefore(new Date())) {
+      throw new ClientError('Data de início da viagem inválida.')
+    }
+
+    if (dayjs(ends_at).isBefore(starts_at)) {
+      throw new ClientError('Data de fim da viagem inválida.')
+    }
+
+    await prisma.trip.update({
+      where: { id: trip_id },
+      data: { destination, starts_at, ends_at },
+    })
+
+    return { message: 'Viagem atualizada com sucesso!' }
+  })
+}
+
+export async function getTripDetails(app: FastifyInstance) {
+  app.withTypeProvider<ZodTypeProvider>().get('/trips/:trip_id', {
+    schema: {
+      params: z.object({
+        trip_id: z.string().uuid(),
+      }),
+    }
+  }, async (request) => {
+    const { trip_id } = request.params
+
+    const trip = await prisma.trip.findUnique({
+      select: {
+        id: true,
+        destination: true,
+        starts_at: true,
+        ends_at: true,
+        is_confirmed: true,
+      },
+      where: { id: trip_id },
+    })
+
+    if (!trip) {
+      throw new ClientError('Viagem não encontrada.')
+    }
+
+    return { trip }
   })
 }

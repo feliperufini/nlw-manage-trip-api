@@ -3,6 +3,7 @@ import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import z from 'zod'
 import { prisma } from '../lib/prisma'
 import { dayjs } from '../lib/dayjs'
+import { ClientError } from '../errors/client-error'
 
 
 export async function createLink(app: FastifyInstance) {
@@ -25,7 +26,7 @@ export async function createLink(app: FastifyInstance) {
     })
 
     if (!trip) {
-      throw new Error('Viagem não encontrada.')
+      throw new ClientError('Viagem não encontrada.')
     }
 
     const link = await prisma.link.create({
@@ -58,7 +59,7 @@ export async function getLinks(app: FastifyInstance) {
     })
 
     if (!trip) {
-      throw new Error('Viagem não encontrada.')
+      throw new ClientError('Viagem não encontrada.')
     }
 
     return { links: trip.links }
